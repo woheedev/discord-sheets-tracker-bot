@@ -39,7 +39,24 @@ export async function syncMembersToSheet(membersMap) {
       "Has Active Thread",
       "Last Updated",
     ];
-    const members = Array.from(membersMap.values());
+
+    // Sort by guild then by username
+    const members = Array.from(membersMap.values()).sort((a, b) => {
+      // Handle null/undefined guilds
+      if (!a.guild) return 1;
+      if (!b.guild) return -1;
+
+      // First compare guilds
+      const guildCompare = a.guild.localeCompare(b.guild);
+
+      // If same guild, compare usernames
+      if (guildCompare === 0) {
+        return a.username.localeCompare(b.username);
+      }
+
+      return guildCompare;
+    });
+
     const rows = members.map((member) => [
       member.discordId || "",
       member.username || "",
