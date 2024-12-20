@@ -139,9 +139,6 @@ async function createIngameNameMessage(channel) {
   const content =
     "Please set your in-game name for Hazardous guild records:\n\n*Please ensure the name matches your in-game character name exactly*";
 
-  // Only clear channel if we need to create new message
-  await channel.bulkDelete(messages);
-
   await channel.send({
     content,
     components: [row],
