@@ -32,6 +32,7 @@ export async function syncMembersToSheet(membersMap) {
     const headers = [
       "Discord ID",
       "Username",
+      "In-Game Name",
       "Guild",
       "Class",
       "Weapon Role",
@@ -40,7 +41,7 @@ export async function syncMembersToSheet(membersMap) {
       "Last Updated",
     ];
 
-    // Sort by guild then by username
+    // Sort by guild then by ingame name
     const members = Array.from(membersMap.values()).sort((a, b) => {
       // Handle null/undefined guilds
       if (!a.guild) return 1;
@@ -49,9 +50,12 @@ export async function syncMembersToSheet(membersMap) {
       // First compare guilds
       const guildCompare = a.guild.localeCompare(b.guild);
 
-      // If same guild, compare usernames
+      // If same guild, compare ingame names
       if (guildCompare === 0) {
-        return a.username.localeCompare(b.username);
+        // Handle null ingame names
+        if (!a.ingameName) return 1;
+        if (!b.ingameName) return -1;
+        return a.ingameName.localeCompare(b.ingameName);
       }
 
       return guildCompare;
@@ -60,6 +64,7 @@ export async function syncMembersToSheet(membersMap) {
     const rows = members.map((member) => [
       member.discordId || "",
       member.username || "",
+      member.ingameName || "",
       member.guild || "",
       member.classCategory || "",
       member.weaponRole || "",
@@ -71,13 +76,13 @@ export async function syncMembersToSheet(membersMap) {
     // Clear existing data
     await sheets.spreadsheets.values.clear({
       spreadsheetId: SHEET_ID,
-      range: "Members!A2:H",
+      range: "Members!A2:I",
     });
 
     // Update sheet
     await sheets.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
-      range: "Members!A1:H",
+      range: "Members!A1:I",
       valueInputOption: "RAW",
       requestBody: {
         values: [headers, ...rows],

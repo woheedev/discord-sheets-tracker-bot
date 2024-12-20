@@ -1,9 +1,19 @@
-import { Client, GatewayIntentBits } from "discord.js";
+import {
+  Client,
+  GatewayIntentBits,
+  ButtonBuilder,
+  ButtonStyle,
+  ActionRowBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+} from "discord.js";
 import * as dotenv from "dotenv";
 import chalk from "chalk";
 import debounce from "lodash/debounce";
 
 import { syncMembersToSheet } from "./sheets.js";
+import { initializeDb, saveIngameName, getIngameName } from "./db.js";
 
 dotenv.config();
 
@@ -25,6 +35,7 @@ const Logger = {
 
 // Constants
 const MAIN_SERVER_ID = "1309266911703334952";
+const INGAME_NAME_CHANNEL = "1309279173566664714";
 
 const GUILD_ROLES = {
   TSUNAMI: { id: "1315072149173698580", name: "Tsunami" },
@@ -104,6 +115,61 @@ async function syncMembers() {
 
 async function hasActiveThread(member) {
   return threadManager.hasActiveThread(member.id);
+}
+
+async function createIngameNameMessage(channel) {
+  // Check for existing message with button
+  const messages = await channel.messages.fetch();
+  const existingMessage = messages.find(
+    (msg) => msg.author.id === client.user.id && msg.components.length > 0
+  );
+
+  if (existingMessage) {
+    Logger.info("Ingame name message already exists");
+    return;
+  }
+
+  const button = new ButtonBuilder()
+    .setCustomId("setIngameName")
+    .setLabel("Set/Update In-Game Name")
+    .setStyle(ButtonStyle.Primary);
+
+  const row = new ActionRowBuilder().addComponents(button);
+
+  const content =
+    "Please set your in-game name for Hazardous guild records:\n\n*Please ensure the name matches your in-game character name exactly*";
+
+  // Only clear channel if we need to create new message
+  await channel.bulkDelete(messages);
+
+  await channel.send({
+    content,
+    components: [row],
+  });
+
+  Logger.info("Created new ingame name message");
+}
+
+function createIngameNameModal(existingName = "") {
+  const trimmedName = existingName.trim();
+  const modal = new ModalBuilder()
+    .setCustomId("ingameNameModal")
+    .setTitle("What is your TnL in-game name?");
+
+  const nameInput = new TextInputBuilder()
+    .setCustomId("ingameNameInput")
+    .setLabel("In-Game Name:")
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMinLength(4)
+    .setMaxLength(15);
+
+  if (trimmedName.length >= 4 && trimmedName.length <= 15) {
+    nameInput.setValue(trimmedName);
+  }
+
+  modal.addComponents(new ActionRowBuilder().addComponents(nameInput));
+  return modal;
 }
 
 class ThreadManager {
@@ -261,6 +327,7 @@ class GuildMemberMapper {
       }
 
       const memberHasActiveThread = await hasActiveThread(member);
+      const ingameName = await getIngameName(member.id);
 
       const {
         id: memberId,
@@ -283,6 +350,7 @@ class GuildMemberMapper {
       this.members.set(memberId, {
         discordId: memberId,
         username,
+        ingameName: ingameName,
         guild: guildRole,
         classCategory,
         weaponRole: weaponRoleId,
@@ -296,6 +364,41 @@ class GuildMemberMapper {
   }
 }
 
+async function sendIngameNameRequest(member) {
+  const ingameName = await getIngameName(member.id);
+
+  const button = new ButtonBuilder()
+    .setCustomId("setIngameName")
+    .setLabel(ingameName ? "Update In-Game Name" : "Set In-Game Name")
+    .setStyle(ingameName ? ButtonStyle.Success : ButtonStyle.Primary);
+
+  const row = new ActionRowBuilder().addComponents(button);
+
+  const content = ingameName
+    ? `Your current in-game name is set to: ${ingameName}\nClick below to update it if needed:`
+    : "Please set your in-game name for Hazardous guild records:\n\n*Please ensure the name matches your in-game character name exactly*";
+
+  try {
+    await member.send({
+      content,
+      components: [row],
+    });
+  } catch (error) {
+    Logger.error(`Cannot DM user ${member.id}: ${error.message}`);
+  }
+}
+
+async function testDmIngameName() {
+  const testUserId = "107391298171891712";
+  const guild = await client.guilds.fetch(MAIN_SERVER_ID);
+  const member = await guild.members.fetch(testUserId);
+
+  if (member) {
+    Logger.info(`Testing DM to ${member.user.tag}`);
+    await sendIngameNameRequest(member);
+  }
+}
+
 // Bot setup
 const client = new Client({
   intents: [
@@ -303,6 +406,7 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.DirectMessages,
   ],
 });
 
@@ -312,9 +416,18 @@ const threadManager = new ThreadManager();
 // Event handlers
 client.once("ready", async () => {
   Logger.info(`Bot logged in as ${client.user.tag}`);
+  await initializeDb();
   const mainGuild = await client.guilds.fetch(MAIN_SERVER_ID);
   await threadManager.initializeCache(mainGuild);
+
+  const channel = await mainGuild.channels.fetch(INGAME_NAME_CHANNEL);
+  if (channel) {
+    await createIngameNameMessage(channel);
+  }
+
   await syncMembers();
+  //startIngameNameReminders();
+  //await testDmIngameName();
 });
 
 client.on("guildMemberUpdate", async (_, newMember) => {
@@ -345,6 +458,79 @@ client.on("threadUpdate", async (oldThread, newThread) => {
   }
 });
 
+client.on("interactionCreate", async (interaction) => {
+  if (interaction.isButton() && interaction.customId === "setIngameName") {
+    const guild = await client.guilds.fetch(MAIN_SERVER_ID);
+    const member = await guild.members.fetch(interaction.user.id);
+    const hasGuildRole = Object.values(GUILD_ROLES).some((role) =>
+      member.roles.cache.has(role.id)
+    );
+
+    if (!hasGuildRole) {
+      await interaction.reply({
+        content: "You must be in one of our guilds to set your in-game name.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const existingName = await getIngameName(interaction.user.id);
+    await interaction.showModal(createIngameNameModal(existingName || ""));
+  }
+
+  if (
+    interaction.isModalSubmit() &&
+    interaction.customId === "ingameNameModal"
+  ) {
+    try {
+      const name = interaction.fields
+        .getTextInputValue("ingameNameInput")
+        .trim();
+
+      if (!name || name.length < 4 || name.length > 15) {
+        await interaction.reply({
+          content: "Your in-game name must be between 4 and 15 characters.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      await saveIngameName(interaction.user.id, name);
+      const guild = await client.guilds.fetch(MAIN_SERVER_ID);
+      const member = await guild.members.fetch(interaction.user.id);
+      await memberMapper.processMember(member);
+      await debouncedSync();
+
+      // Only update DM message
+      if (interaction.message?.channel?.type === 1) {
+        // 1 = DM
+        const newButton = new ButtonBuilder()
+          .setCustomId("setIngameName")
+          .setLabel("Update In-Game Name")
+          .setStyle(ButtonStyle.Primary);
+
+        const row = new ActionRowBuilder().addComponents(newButton);
+        await interaction.message.edit({
+          content: `Your current in-game name is set to: ${name}\nClick below to update it if needed:`,
+          components: [row],
+        });
+      }
+
+      await interaction.reply({
+        content: `Your in-game name has been set to: ${name}`,
+        ephemeral: true,
+      });
+    } catch (error) {
+      Logger.error(`Modal submit error: ${error.message}`);
+      await interaction.reply({
+        content:
+          "There was an error processing your request. Please try again.",
+        ephemeral: true,
+      });
+    }
+  }
+});
+
 const debouncedSync = debounce(async () => {
   try {
     await syncMembersToSheet(memberMapper.members);
@@ -356,5 +542,49 @@ const debouncedSync = debounce(async () => {
 setInterval(() => {
   debouncedSync();
 }, 5 * 60 * 1000);
+
+async function startIngameNameReminders() {
+  // Wait for 3 days before sending the first reminder
+  setTimeout(async () => {
+    const mainGuild = await client.guilds.fetch(MAIN_SERVER_ID);
+    const members = await mainGuild.members.fetch();
+
+    for (const [id, member] of members) {
+      // Skip bots first (fastest check)
+      if (member.user.bot) continue;
+
+      // Check guild role next (memory check)
+      const guildRole = memberMapper.findGuildRole(member);
+      if (!guildRole) continue;
+
+      // Check database last (slowest check)
+      const hasName = await getIngameName(id);
+      if (!hasName) {
+        await sendIngameNameRequest(member);
+      }
+    }
+
+    // Set interval to send reminders every 3 days
+    setInterval(async () => {
+      const mainGuild = await client.guilds.fetch(MAIN_SERVER_ID);
+      const members = await mainGuild.members.fetch();
+
+      for (const [id, member] of members) {
+        // Skip bots first (fastest check)
+        if (member.user.bot) continue;
+
+        // Check guild role next (memory check)
+        const guildRole = memberMapper.findGuildRole(member);
+        if (!guildRole) continue;
+
+        // Check database last (slowest check)
+        const hasName = await getIngameName(id);
+        if (!hasName) {
+          await sendIngameNameRequest(member);
+        }
+      }
+    }, 3 * 24 * 60 * 60 * 1000); // 3 days
+  }, 3 * 24 * 60 * 60 * 1000); // Initial 3 days wait
+}
 
 client.login(process.env.TOKEN);
