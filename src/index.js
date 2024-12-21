@@ -88,6 +88,40 @@ const REVIEW_CHANNELS = {
   bomber: { channelId: "1316182023433486427" },
 };
 
+const SYSTEM_ROLES = {
+  NO_IGN: "1319814128788836403",
+  NO_CLASS: "1319814189354848296",
+  NO_THREAD: "1319814252189581476",
+};
+
+async function updateSystemRoles(
+  member,
+  { hasClassRole, hasIngameName, hasThread }
+) {
+  const roles = member.roles.cache;
+
+  // No IGN Role management
+  if (!hasIngameName && !roles.has(SYSTEM_ROLES.NO_IGN)) {
+    await member.roles.add(SYSTEM_ROLES.NO_IGN).catch(() => {});
+  } else if (hasIngameName && roles.has(SYSTEM_ROLES.NO_IGN)) {
+    await member.roles.remove(SYSTEM_ROLES.NO_IGN).catch(() => {});
+  }
+
+  // No Class Role management
+  if (!hasClassRole && !roles.has(SYSTEM_ROLES.NO_CLASS)) {
+    await member.roles.add(SYSTEM_ROLES.NO_CLASS).catch(() => {});
+  } else if (hasClassRole && roles.has(SYSTEM_ROLES.NO_CLASS)) {
+    await member.roles.remove(SYSTEM_ROLES.NO_CLASS).catch(() => {});
+  }
+
+  // No Thread Role management
+  if (!hasThread && !roles.has(SYSTEM_ROLES.NO_THREAD)) {
+    await member.roles.add(SYSTEM_ROLES.NO_THREAD).catch(() => {});
+  } else if (hasThread && roles.has(SYSTEM_ROLES.NO_THREAD)) {
+    await member.roles.remove(SYSTEM_ROLES.NO_THREAD).catch(() => {});
+  }
+}
+
 async function updateMemberFromThread(thread) {
   const userId = threadManager.getUserIdFromThreadName(thread.name);
   if (userId) {
@@ -320,6 +354,11 @@ class GuildMemberMapper {
       if (!guildRole) {
         // Remove the member if they no longer have a guild role
         this.members.delete(member.id);
+        await updateSystemRoles(member, {
+          hasClassRole: false,
+          hasIngameName: false,
+          hasThread: false,
+        }).catch(() => {});
         return;
       }
 
@@ -343,6 +382,13 @@ class GuildMemberMapper {
         memberId,
         member
       );
+
+      // Update system roles
+      await updateSystemRoles(member, {
+        hasClassRole: !!classCategory,
+        hasIngameName: !!ingameName,
+        hasThread: memberHasActiveThread,
+      });
 
       this.members.set(memberId, {
         discordId: memberId,
@@ -492,6 +538,11 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
 
+      await interaction.reply({
+        content: `Your in-game name has been set to: ${name}`,
+        ephemeral: true,
+      });
+
       await saveIngameName(interaction.user.id, name);
       const guild = await client.guilds.fetch(MAIN_SERVER_ID);
       const member = await guild.members.fetch(interaction.user.id);
@@ -512,11 +563,6 @@ client.on("interactionCreate", async (interaction) => {
           components: [row],
         });
       }
-
-      await interaction.reply({
-        content: `Your in-game name has been set to: ${name}`,
-        ephemeral: true,
-      });
     } catch (error) {
       Logger.error(`Modal submit error: ${error.message}`);
       await interaction.reply({
