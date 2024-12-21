@@ -7,6 +7,8 @@ import {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  SlashCommandBuilder,
+  PermissionFlagsBits,
 } from "discord.js";
 import * as dotenv from "dotenv";
 import chalk from "chalk";
@@ -42,6 +44,11 @@ const GUILD_ROLES = {
   HURRICANE: { id: "1315071746721976363", name: "Hurricane" },
   AVALANCHE: { id: "1314816353797935214", name: "Avalanche" },
   HAILSTORM: { id: "1315072176839327846", name: "Hailstorm" },
+};
+
+const AUTHORIZED_ROLES = {
+  LEADERSHIP: "1309271313398894643",
+  OFFICER: "1309284427553312769",
 };
 
 const CLASS_CATEGORIES = {
@@ -94,7 +101,31 @@ const SYSTEM_ROLES = {
   NO_THREAD: "1319882021518184520",
 };
 
-async function updateSystemRoles(member, { hasClassRole, hasIngameName, hasThread }) {
+const commands = [
+  new SlashCommandBuilder()
+    .setName("ign")
+    .setDescription("Set a user's in-game name")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+    .addUserOption((option) =>
+      option
+        .setName("user")
+        .setDescription("The Discord user to set IGN for")
+        .setRequired(true)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("name")
+        .setDescription("The in-game name to set")
+        .setRequired(true)
+        .setMinLength(2)
+        .setMaxLength(15)
+    ),
+];
+
+async function updateSystemRoles(
+  member,
+  { hasClassRole, hasIngameName, hasThread }
+) {
   try {
     const currentRoles = Array.from(member.roles.cache.keys());
     const rolesToAdd = [];
@@ -102,37 +133,47 @@ async function updateSystemRoles(member, { hasClassRole, hasIngameName, hasThrea
 
     // Calculate role changes
     if (!hasIngameName) {
-      !currentRoles.includes(SYSTEM_ROLES.NO_IGN) && rolesToAdd.push(SYSTEM_ROLES.NO_IGN);
+      !currentRoles.includes(SYSTEM_ROLES.NO_IGN) &&
+        rolesToAdd.push(SYSTEM_ROLES.NO_IGN);
     } else {
-      currentRoles.includes(SYSTEM_ROLES.NO_IGN) && rolesToRemove.push(SYSTEM_ROLES.NO_IGN);
+      currentRoles.includes(SYSTEM_ROLES.NO_IGN) &&
+        rolesToRemove.push(SYSTEM_ROLES.NO_IGN);
     }
 
     if (!hasClassRole) {
-      !currentRoles.includes(SYSTEM_ROLES.NO_CLASS) && rolesToAdd.push(SYSTEM_ROLES.NO_CLASS);
+      !currentRoles.includes(SYSTEM_ROLES.NO_CLASS) &&
+        rolesToAdd.push(SYSTEM_ROLES.NO_CLASS);
     } else {
-      currentRoles.includes(SYSTEM_ROLES.NO_CLASS) && rolesToRemove.push(SYSTEM_ROLES.NO_CLASS);
+      currentRoles.includes(SYSTEM_ROLES.NO_CLASS) &&
+        rolesToRemove.push(SYSTEM_ROLES.NO_CLASS);
     }
 
     if (!hasThread) {
-      !currentRoles.includes(SYSTEM_ROLES.NO_THREAD) && rolesToAdd.push(SYSTEM_ROLES.NO_THREAD);
+      !currentRoles.includes(SYSTEM_ROLES.NO_THREAD) &&
+        rolesToAdd.push(SYSTEM_ROLES.NO_THREAD);
     } else {
-      currentRoles.includes(SYSTEM_ROLES.NO_THREAD) && rolesToRemove.push(SYSTEM_ROLES.NO_THREAD);
+      currentRoles.includes(SYSTEM_ROLES.NO_THREAD) &&
+        rolesToRemove.push(SYSTEM_ROLES.NO_THREAD);
     }
 
     // Batch update roles if changes needed
     if (rolesToAdd.length > 0) {
-      await member.roles.add(rolesToAdd).catch(error => {
+      await member.roles.add(rolesToAdd).catch((error) => {
         Logger.error(`Failed to add roles to ${member.id}: ${error.message}`);
       });
     }
-    
+
     if (rolesToRemove.length > 0) {
-      await member.roles.remove(rolesToRemove).catch(error => {
-        Logger.error(`Failed to remove roles from ${member.id}: ${error.message}`);
+      await member.roles.remove(rolesToRemove).catch((error) => {
+        Logger.error(
+          `Failed to remove roles from ${member.id}: ${error.message}`
+        );
       });
     }
   } catch (error) {
-    Logger.error(`Error updating system roles for ${member.id}: ${error.message}`);
+    Logger.error(
+      `Error updating system roles for ${member.id}: ${error.message}`
+    );
   }
 }
 
@@ -367,13 +408,15 @@ class GuildMemberMapper {
       const guildRole = this.findGuildRole(member);
       if (!guildRole) {
         // Clean up system roles if they have any
-        const hasSystemRoles = Object.values(SYSTEM_ROLES).some(roleId => 
+        const hasSystemRoles = Object.values(SYSTEM_ROLES).some((roleId) =>
           member.roles.cache.has(roleId)
         );
         if (hasSystemRoles) {
-          await member.roles.remove(Object.values(SYSTEM_ROLES)).catch(() => {});
+          await member.roles
+            .remove(Object.values(SYSTEM_ROLES))
+            .catch(() => {});
         }
-        
+
         // Clean up tracking if they were tracked
         if (this.members.has(member.id)) {
           this.members.delete(member.id);
@@ -490,15 +533,17 @@ client.once("ready", async () => {
   await syncMembers();
   //startIngameNameReminders();
   //await testDmIngameName();
+  await client.application.commands.set(commands);
 });
 
 client.on("guildMemberUpdate", async (oldMember, newMember) => {
   if (newMember.guild.id === MAIN_SERVER_ID) {
     // Only process if role changes weren't from our system roles
-    const systemRoleChange = Object.values(SYSTEM_ROLES).some(roleId => 
-      oldMember.roles.cache.has(roleId) !== newMember.roles.cache.has(roleId)
+    const systemRoleChange = Object.values(SYSTEM_ROLES).some(
+      (roleId) =>
+        oldMember.roles.cache.has(roleId) !== newMember.roles.cache.has(roleId)
     );
-    
+
     if (!systemRoleChange) {
       await memberMapper.processMember(newMember);
       debouncedSync();
@@ -596,6 +641,71 @@ client.on("interactionCreate", async (interaction) => {
           "There was an error processing your request. Please try again.",
         ephemeral: true,
       });
+    }
+  }
+
+  if (interaction.isChatInputCommand()) {
+    switch (interaction.commandName) {
+      case "ign":
+        // Check authorization
+        const hasAuthorizedRole = interaction.member.roles.cache.hasAny(
+          ...Object.values(AUTHORIZED_ROLES)
+        );
+        if (!hasAuthorizedRole) {
+          await interaction.reply({
+            content: "You don't have permission to use this command.",
+            ephemeral: true,
+          });
+          return;
+        }
+
+        const targetUser = interaction.options.getUser("user");
+        const newName = interaction.options.getString("name").trim();
+
+        // Validate name
+        if (!newName || newName.length < 2 || newName.length > 15) {
+          await interaction.reply({
+            content: "The in-game name must be between 2 and 15 characters.",
+            ephemeral: true,
+          });
+          return;
+        }
+
+        try {
+          const guild = await client.guilds.fetch(MAIN_SERVER_ID);
+          const member = await guild.members.fetch(targetUser.id);
+
+          // Check if target has guild role
+          const hasGuildRole = Object.values(GUILD_ROLES).some((role) =>
+            member.roles.cache.has(role.id)
+          );
+
+          if (!hasGuildRole) {
+            await interaction.reply({
+              content: "The target user must be in one of our guilds.",
+              ephemeral: true,
+            });
+            return;
+          }
+
+          // Save and update
+          await saveIngameName(targetUser.id, newName);
+          await memberMapper.processMember(member);
+          await debouncedSync();
+
+          await interaction.reply({
+            content: `Set ${targetUser}'s in-game name to: ${newName}`,
+            ephemeral: true,
+          });
+        } catch (error) {
+          Logger.error(`Error in /ign command: ${error.message}`);
+          await interaction.reply({
+            content:
+              "There was an error processing the command. Please try again.",
+            ephemeral: true,
+          });
+        }
+        break;
     }
   }
 });
