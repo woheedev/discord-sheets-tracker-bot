@@ -120,6 +120,15 @@ const commands = [
         .setMinLength(2)
         .setMaxLength(15)
     ),
+  new SlashCommandBuilder()
+    .setName("info")
+    .setDescription("Show member information")
+    .addUserOption((option) =>
+      option
+        .setName("user")
+        .setDescription("The Discord user to get info for")
+        .setRequired(true)
+    ),
 ];
 
 async function updateSystemRoles(
@@ -699,6 +708,78 @@ client.on("interactionCreate", async (interaction) => {
           });
         } catch (error) {
           Logger.error(`Error in /ign command: ${error.message}`);
+          await interaction.reply({
+            content:
+              "There was an error processing the command. Please try again.",
+            ephemeral: true,
+          });
+        }
+        break;
+      case "info":
+        // Check authorization
+        const hasGuildRole = Object.values(GUILD_ROLES).some((role) =>
+          interaction.member.roles.cache.has(role.id)
+        );
+
+        if (!hasGuildRole) {
+          await interaction.reply({
+            content: "You must be in one of our guilds to use this command.",
+            ephemeral: true,
+          });
+          return;
+        }
+
+        try {
+          const targetUser = interaction.options.getUser("user");
+          const memberInfo = memberMapper.getMember(targetUser.id);
+          const guildMember = interaction.guild.members.cache.get(
+            targetUser.id
+          );
+          const displayName = guildMember?.nickname || targetUser.username;
+
+          if (!memberInfo) {
+            await interaction.reply({
+              content:
+                "No information found for this user. They may not be in any of our guilds.",
+              ephemeral: true,
+            });
+            return;
+          }
+
+          const infoEmbed = {
+            color: 0x0099ff,
+            title: `Member Info: ${displayName}`,
+            fields: [
+              {
+                name: "In-Game Name",
+                value: memberInfo.ingameName || "Not Set",
+                inline: true,
+              },
+              {
+                name: "Guild",
+                value: memberInfo.guild || "None",
+                inline: true,
+              },
+              {
+                name: "Class",
+                value: memberInfo.classCategory || "Not Set",
+                inline: true,
+              },
+              {
+                name: "Weapon",
+                value: memberInfo.weaponRoleName || "Not Set",
+                inline: true,
+              },
+            ],
+            timestamp: new Date(memberInfo.lastUpdated),
+            footer: { text: "Last Updated" },
+          };
+
+          await interaction.reply({
+            embeds: [infoEmbed],
+          });
+        } catch (error) {
+          Logger.error(`Error in /info command: ${error.message}`);
           await interaction.reply({
             content:
               "There was an error processing the command. Please try again.",
