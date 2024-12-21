@@ -747,9 +747,10 @@ client.on("interactionCreate", async (interaction) => {
           }
 
           const infoEmbed = {
-            color: 0x0099ff,
+            color: 0xc27d0f,
             title: `Member Info: ${displayName}`,
             fields: [
+              // Row 1
               {
                 name: "In-Game Name",
                 value: memberInfo.ingameName || "Not Set",
@@ -761,6 +762,12 @@ client.on("interactionCreate", async (interaction) => {
                 inline: true,
               },
               {
+                name: "\u200b",
+                value: "\u200b",
+                inline: true,
+              },
+              // Row 2
+              {
                 name: "Class",
                 value: memberInfo.classCategory || "Not Set",
                 inline: true,
@@ -768,6 +775,11 @@ client.on("interactionCreate", async (interaction) => {
               {
                 name: "Weapon",
                 value: memberInfo.weaponRoleName || "Not Set",
+                inline: true,
+              },
+              {
+                name: "\u200b",
+                value: "\u200b",
                 inline: true,
               },
             ],
