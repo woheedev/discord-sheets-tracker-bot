@@ -89,36 +89,50 @@ const REVIEW_CHANNELS = {
 };
 
 const SYSTEM_ROLES = {
-  NO_IGN: "1319814128788836403",
-  NO_CLASS: "1319814189354848296",
-  NO_THREAD: "1319814252189581476",
+  NO_IGN: "1319882093756678175",
+  NO_CLASS: "1319882096331853936",
+  NO_THREAD: "1319882021518184520",
 };
 
-async function updateSystemRoles(
-  member,
-  { hasClassRole, hasIngameName, hasThread }
-) {
-  const roles = member.roles.cache;
+async function updateSystemRoles(member, { hasClassRole, hasIngameName, hasThread }) {
+  try {
+    const currentRoles = Array.from(member.roles.cache.keys());
+    const rolesToAdd = [];
+    const rolesToRemove = [];
 
-  // No IGN Role management
-  if (!hasIngameName && !roles.has(SYSTEM_ROLES.NO_IGN)) {
-    await member.roles.add(SYSTEM_ROLES.NO_IGN).catch(() => {});
-  } else if (hasIngameName && roles.has(SYSTEM_ROLES.NO_IGN)) {
-    await member.roles.remove(SYSTEM_ROLES.NO_IGN).catch(() => {});
-  }
+    // Calculate role changes
+    if (!hasIngameName) {
+      !currentRoles.includes(SYSTEM_ROLES.NO_IGN) && rolesToAdd.push(SYSTEM_ROLES.NO_IGN);
+    } else {
+      currentRoles.includes(SYSTEM_ROLES.NO_IGN) && rolesToRemove.push(SYSTEM_ROLES.NO_IGN);
+    }
 
-  // No Class Role management
-  if (!hasClassRole && !roles.has(SYSTEM_ROLES.NO_CLASS)) {
-    await member.roles.add(SYSTEM_ROLES.NO_CLASS).catch(() => {});
-  } else if (hasClassRole && roles.has(SYSTEM_ROLES.NO_CLASS)) {
-    await member.roles.remove(SYSTEM_ROLES.NO_CLASS).catch(() => {});
-  }
+    if (!hasClassRole) {
+      !currentRoles.includes(SYSTEM_ROLES.NO_CLASS) && rolesToAdd.push(SYSTEM_ROLES.NO_CLASS);
+    } else {
+      currentRoles.includes(SYSTEM_ROLES.NO_CLASS) && rolesToRemove.push(SYSTEM_ROLES.NO_CLASS);
+    }
 
-  // No Thread Role management
-  if (!hasThread && !roles.has(SYSTEM_ROLES.NO_THREAD)) {
-    await member.roles.add(SYSTEM_ROLES.NO_THREAD).catch(() => {});
-  } else if (hasThread && roles.has(SYSTEM_ROLES.NO_THREAD)) {
-    await member.roles.remove(SYSTEM_ROLES.NO_THREAD).catch(() => {});
+    if (!hasThread) {
+      !currentRoles.includes(SYSTEM_ROLES.NO_THREAD) && rolesToAdd.push(SYSTEM_ROLES.NO_THREAD);
+    } else {
+      currentRoles.includes(SYSTEM_ROLES.NO_THREAD) && rolesToRemove.push(SYSTEM_ROLES.NO_THREAD);
+    }
+
+    // Batch update roles if changes needed
+    if (rolesToAdd.length > 0) {
+      await member.roles.add(rolesToAdd).catch(error => {
+        Logger.error(`Failed to add roles to ${member.id}: ${error.message}`);
+      });
+    }
+    
+    if (rolesToRemove.length > 0) {
+      await member.roles.remove(rolesToRemove).catch(error => {
+        Logger.error(`Failed to remove roles from ${member.id}: ${error.message}`);
+      });
+    }
+  } catch (error) {
+    Logger.error(`Error updating system roles for ${member.id}: ${error.message}`);
   }
 }
 
@@ -192,10 +206,10 @@ function createIngameNameModal(existingName = "") {
     .setLabel("In-Game Name:")
     .setStyle(TextInputStyle.Short)
     .setRequired(true)
-    .setMinLength(4)
+    .setMinLength(2)
     .setMaxLength(15);
 
-  if (trimmedName.length >= 4 && trimmedName.length <= 15) {
+  if (trimmedName.length >= 2 && trimmedName.length <= 15) {
     nameInput.setValue(trimmedName);
   }
 
@@ -352,13 +366,18 @@ class GuildMemberMapper {
     try {
       const guildRole = this.findGuildRole(member);
       if (!guildRole) {
-        // Remove the member if they no longer have a guild role
-        this.members.delete(member.id);
-        await updateSystemRoles(member, {
-          hasClassRole: false,
-          hasIngameName: false,
-          hasThread: false,
-        }).catch(() => {});
+        // Clean up system roles if they have any
+        const hasSystemRoles = Object.values(SYSTEM_ROLES).some(roleId => 
+          member.roles.cache.has(roleId)
+        );
+        if (hasSystemRoles) {
+          await member.roles.remove(Object.values(SYSTEM_ROLES)).catch(() => {});
+        }
+        
+        // Clean up tracking if they were tracked
+        if (this.members.has(member.id)) {
+          this.members.delete(member.id);
+        }
         return;
       }
 
@@ -473,10 +492,17 @@ client.once("ready", async () => {
   //await testDmIngameName();
 });
 
-client.on("guildMemberUpdate", async (_, newMember) => {
+client.on("guildMemberUpdate", async (oldMember, newMember) => {
   if (newMember.guild.id === MAIN_SERVER_ID) {
-    await memberMapper.processMember(newMember);
-    debouncedSync();
+    // Only process if role changes weren't from our system roles
+    const systemRoleChange = Object.values(SYSTEM_ROLES).some(roleId => 
+      oldMember.roles.cache.has(roleId) !== newMember.roles.cache.has(roleId)
+    );
+    
+    if (!systemRoleChange) {
+      await memberMapper.processMember(newMember);
+      debouncedSync();
+    }
   }
 });
 
@@ -530,9 +556,9 @@ client.on("interactionCreate", async (interaction) => {
         .getTextInputValue("ingameNameInput")
         .trim();
 
-      if (!name || name.length < 4 || name.length > 15) {
+      if (!name || name.length < 2 || name.length > 15) {
         await interaction.reply({
-          content: "Your in-game name must be between 4 and 15 characters.",
+          content: "Your in-game name must be between 2 and 15 characters.",
           ephemeral: true,
         });
         return;
