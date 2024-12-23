@@ -803,6 +803,19 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
+client.on("guildMemberRemove", async (member) => {
+  if (member.guild.id === MAIN_SERVER_ID) {
+    // Check if member was tracked
+    if (memberMapper.members.has(member.id)) {
+      // Remove from our tracking
+      memberMapper.members.delete(member.id);
+      Logger.info(`Removed ${member.user.tag} (${member.id}) from tracking`);
+      // Sync changes to sheet
+      await debouncedSync();
+    }
+  }
+});
+
 const debouncedSync = debounce(async () => {
   try {
     await syncMembersToSheet(memberMapper.members);
