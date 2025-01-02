@@ -13,6 +13,7 @@ import {
   setIngameName,
   getUserData,
   getAllUserData,
+  setShuttingDown,
 } from "./utils/db.js";
 import { Logger } from "./utils/logger.js";
 
@@ -143,6 +144,12 @@ async function syncMembers() {
       databases,
       memberArray.map((m) => m.id)
     );
+
+    // If userDataMap is null, it means there was a database error
+    if (userDataMap === null) {
+      Logger.error("Failed to fetch user data from Appwrite, aborting sync");
+      return;
+    }
 
     // Process all members with the batch data
     await Promise.all(
@@ -305,18 +312,17 @@ const memberMapper = new GuildMemberMapper();
 async function cleanup() {
   Logger.info("Starting cleanup...");
 
+  // Set shutdown state first
+  setShuttingDown(true);
+
   // Clear sync interval
   if (syncInterval) {
     clearInterval(syncInterval);
+    Logger.info("Cleared sync interval");
   }
 
-  // Final sync attempt before shutdown
-  try {
-    await syncWithRetry();
-    Logger.info("Final sync completed");
-  } catch (error) {
-    Logger.error(`Final sync failed: ${error.message}`);
-  }
+  // Skip final sync during shutdown to prevent database errors
+  Logger.info("Skipping final sync during shutdown");
 
   // Destroy the client
   if (client) {
@@ -552,8 +558,14 @@ async function syncWithRetry() {
     try {
       // First fetch fresh data
       await syncMembers();
-      // Then sync to sheet
-      await syncMembersToSheet(memberMapper.members);
+
+      // Only proceed with sheet sync if we have valid member data
+      if (memberMapper.getAllMembers().length > 0) {
+        await syncMembersToSheet(memberMapper.members);
+      } else {
+        Logger.error("Skipping sheet sync due to empty member data");
+        return;
+      }
 
       if (retryCount > 0) {
         Logger.info(`Successfully synced after ${retryCount} retries`);
@@ -590,7 +602,7 @@ const startPeriodicSync = () => {
     syncWithRetry().catch((error) => {
       Logger.error(`Periodic sync failed: ${error.message}`);
     });
-  }, 60 * 1000); // Every 1 minute
+  }, 10 * 60 * 1000); // Every 10 minutes
 
   // Initial sync
   syncWithRetry().catch((error) => {
