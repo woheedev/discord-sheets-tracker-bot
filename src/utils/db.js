@@ -216,15 +216,141 @@ export function validateIngameName(name) {
     return { valid: false, error: "Name cannot be longer than 16 characters" };
   }
 
-  // Check for valid characters (letters, numbers, spaces, and common special characters)
-  const validCharRegex = /^[a-zA-Z0-9\s._-]+$/;
+  // Check for valid characters
+  const validCharRegex = /^[^\p{C}\p{Z}\p{M}\p{P}]*$/u;
   if (!validCharRegex.test(trimmedName)) {
     return {
       valid: false,
       error:
-        "Name can only contain letters, numbers, spaces, dots, underscores, and hyphens",
+        "Name cannot contain spaces, punctuation marks, or certain special characters.",
     };
   }
 
   return { valid: true, value: trimmedName };
+}
+
+export async function getReviewData(databases, discordId) {
+  try {
+    const response = await databases.listDocuments(
+      process.env.APPWRITE_DATABASE_ID,
+      process.env.APPWRITE_REVIEW_COLLECTION_ID,
+      [Query.equal("discord_id", discordId)]
+    );
+
+    if (response.documents.length === 0) {
+      // Return default values when no document exists
+      return {
+        has_vod: false,
+        vod_check_date: "",
+        gear_checked: false,
+        gear_check_date: "",
+        gear_score: 0,
+        notes: "",
+      };
+    }
+
+    return response.documents[0];
+  } catch (error) {
+    Logger.error(`Error getting review data: ${error.message}`);
+    // Return default values on error
+    return {
+      has_vod: false,
+      vod_check_date: "",
+      gear_checked: false,
+      gear_check_date: "",
+      gear_score: 0,
+      notes: "",
+    };
+  }
+}
+
+export async function updateReviewData(databases, discordId, updates) {
+  try {
+    // Get existing document or prepare for new one
+    const response = await databases.listDocuments(
+      process.env.APPWRITE_DATABASE_ID,
+      process.env.APPWRITE_REVIEW_COLLECTION_ID,
+      [Query.equal("discord_id", discordId)]
+    );
+
+    const updateData = {
+      discord_id: discordId,
+      ...updates,
+    };
+
+    // Format current date as M/D/YY
+    const now = new Date();
+    const formattedDate = `${now.getMonth() + 1}/${now.getDate()}/${String(
+      now.getFullYear()
+    ).slice(-2)}`;
+
+    // Handle VOD updates
+    if (updates.has_vod !== undefined) {
+      updateData.has_vod = updates.has_vod === "true";
+      if (updateData.has_vod) {
+        // If setting has_vod to true, update the date
+        updateData.vod_check_date = formattedDate;
+      } else {
+        // If setting has_vod to false, clear the date
+        updateData.vod_check_date = "";
+      }
+    } else if (updates.update_vod_date) {
+      // Only allow updating VOD date if has_vod is true in existing document
+      const existingDoc = response.documents[0];
+      if (!existingDoc?.has_vod) {
+        throw new Error(
+          "Cannot update VOD check date when VOD is not marked as available"
+        );
+      }
+      updateData.vod_check_date = formattedDate;
+    }
+
+    // Handle gear check updates
+    if (updates.gear_checked !== undefined) {
+      updateData.gear_checked = updates.gear_checked === "true";
+      if (updateData.gear_checked) {
+        // If setting gear_checked to true, update the date
+        updateData.gear_check_date = formattedDate;
+      } else {
+        // If setting gear_checked to false, clear the date
+        updateData.gear_check_date = "";
+      }
+    } else if (updates.update_gear_date) {
+      // Only allow updating gear date if gear_checked is true in existing document
+      const existingDoc = response.documents[0];
+      if (!existingDoc?.gear_checked) {
+        throw new Error(
+          "Cannot update gear check date when gear is not marked as checked"
+        );
+      }
+      updateData.gear_check_date = formattedDate;
+    }
+
+    // Remove the update flags from the final data
+    delete updateData.update_vod_date;
+    delete updateData.update_gear_date;
+
+    if (response.documents.length > 0) {
+      // Update existing document
+      const doc = response.documents[0];
+      await databases.updateDocument(
+        process.env.APPWRITE_DATABASE_ID,
+        process.env.APPWRITE_REVIEW_COLLECTION_ID,
+        doc.$id,
+        updateData
+      );
+    } else {
+      // Create new document
+      await databases.createDocument(
+        process.env.APPWRITE_DATABASE_ID,
+        process.env.APPWRITE_REVIEW_COLLECTION_ID,
+        "unique()",
+        updateData
+      );
+    }
+    return true;
+  } catch (error) {
+    Logger.error(`Error updating review data: ${error.message}`);
+    throw error;
+  }
 }
